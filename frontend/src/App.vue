@@ -6,6 +6,7 @@ const interfaces = ref([]);
 const bridges = ref([]);
 const error = ref("");
 const wirelessOnly = ref(false);
+const newBridgeName = ref("");
 
 const filteredInterfaces = computed(() => {
   if (wirelessOnly.value) {
@@ -13,6 +14,48 @@ const filteredInterfaces = computed(() => {
   }
   return interfaces.value;
 });
+
+const loadBridges = async () => {
+  try {
+    const bridgesResponse = await fetch("http://localhost:3000/api/bridges");
+    const bridgesData = await bridgesResponse.json();
+    bridges.value = bridgesData;
+    console.log("Bridges carregadas:", bridgesData);
+  } catch (err) {
+    console.error("Erro ao carregar bridges:", err);
+    error.value = "Erro ao carregar bridges.";
+  }
+};
+
+const createBridge = async () => {
+  if (!newBridgeName.value.trim()) return;
+
+  try {
+    const response = await fetch("http://localhost:3000/api/bridges", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: newBridgeName.value
+      })
+    });
+
+    const data = await response.json();
+    console.log("Resposta ao criar bridge:", data);
+
+    if (!response.ok) {
+      error.value = data.error || "Erro ao criar bridge.";
+      return;
+    }
+
+    newBridgeName.value = "";
+    await loadBridges();
+  } catch (err) {
+    console.error("Erro no createBridge:", err);
+    error.value = "Erro ao criar bridge.";
+  }
+};
 
 onMounted(async () => {
   try {
@@ -24,10 +67,9 @@ onMounted(async () => {
     const interfacesData = await interfacesResponse.json();
     interfaces.value = interfacesData;
 
-    const bridgesResponse = await fetch("http://localhost:3000/api/bridges");
-    const bridgesData = await bridgesResponse.json();
-    bridges.value = bridgesData;
+    await loadBridges();
   } catch (err) {
+    console.error("Erro ao carregar dados:", err);
     error.value = "Erro ao carregar dados do router.";
   }
 });
@@ -37,7 +79,7 @@ onMounted(async () => {
   <div style="padding: 20px">
     <h1>Controlador SDN MikroTik</h1>
 
-    <p v-if="error">{{ error }}</p>
+    <p v-if="error" style="color: red; font-weight: bold;">{{ error }}</p>
 
     <div v-if="resource">
       <p><strong>Board:</strong> {{ resource["board-name"] }}</p>
@@ -73,7 +115,7 @@ onMounted(async () => {
           <td>{{ iface.name }}</td>
           <td>{{ iface.type }}</td>
           <td>{{ iface.mtu }}</td>
-          <td>{{ iface["mac-address"] }}</td>
+          <td>{{ iface['mac-address'] }}</td>
           <td>{{ iface.running }}</td>
           <td>{{ iface.disabled }}</td>
         </tr>
@@ -85,6 +127,15 @@ onMounted(async () => {
     <hr style="margin: 24px 0" />
 
     <h2>Bridges</h2>
+
+    <div style="margin-bottom: 12px;">
+      <input
+        v-model="newBridgeName"
+        placeholder="Nome da nova bridge"
+        style="margin-right: 8px;"
+      />
+      <button @click="createBridge">Criar Bridge</button>
+    </div>
 
     <table v-if="bridges.length" border="1" cellpadding="8" cellspacing="0">
       <thead>
