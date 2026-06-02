@@ -221,11 +221,6 @@ async function createPod() {
 }
 
 async function deletePod(namespace, name) {
-  if (isProtectedNamespace(namespace)) {
-    showError("Não deves eliminar pods de namespaces internos do Kubernetes.");
-    return;
-  }
-
   if (!confirm(`Eliminar pod "${name}" no namespace "${namespace}"?`)) {
     return;
   }
@@ -782,12 +777,11 @@ onMounted(() => {
                 </button>
 
                 <button
-                  class="delete-btn"
-                  :disabled="isProtectedNamespace(pod.metadata.namespace)"
-                  @click="deletePod(pod.metadata.namespace, pod.metadata.name)"
-                >
-                  Eliminar
-                </button>
+  class="delete-btn"
+  @click="deletePod(pod.metadata.namespace, pod.metadata.name)"
+>
+  Eliminar
+</button>
               </td>
             </tr>
           </tbody>

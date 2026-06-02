@@ -183,8 +183,17 @@ app.delete("/api/pods/:namespace/:name", (req, res) => {
     });
   }
 
-  if (blockProtectedNamespace(namespace, res)) {
-    return;
+  const protectedPodNamespaces = [
+    "kube-system",
+    "kube-public",
+    "kube-node-lease",
+    "ingress-nginx",
+  ];
+
+  if (protectedPodNamespaces.includes(namespace)) {
+    return res.status(400).json({
+      error: `Não é permitido eliminar pods do namespace interno "${namespace}".`,
+    });
   }
 
   runKubectl(`kubectl delete pod ${name} -n ${namespace}`, res);
@@ -262,9 +271,11 @@ app.delete("/api/deployments/:namespace/:name", (req, res) => {
     });
   }
 
-  if (blockProtectedNamespace(namespace, res)) {
-    return;
-  }
+  if (["kube-system", "kube-public", "kube-node-lease", "ingress-nginx"].includes(namespace)) {
+  return res.status(400).json({
+    error: `Não é permitido eliminar deployments do namespace interno "${namespace}".`,
+  });
+}
 
   runKubectl(`kubectl delete deployment ${name} -n ${namespace}`, res);
 });
@@ -318,9 +329,11 @@ app.delete("/api/services/:namespace/:name", (req, res) => {
     });
   }
 
-  if (blockProtectedNamespace(namespace, res)) {
-    return;
-  }
+  if (["kube-system", "kube-public", "kube-node-lease", "ingress-nginx"].includes(namespace)) {
+  return res.status(400).json({
+    error: `Não é permitido eliminar services do namespace interno "${namespace}".`,
+  });
+}
 
   runKubectl(`kubectl delete service ${name} -n ${namespace}`, res);
 });
