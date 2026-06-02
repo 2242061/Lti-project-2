@@ -23,12 +23,14 @@ const podForm = ref({
   name: "",
   image: "nginx",
   namespace: "default",
+  port: 80,
 });
 
 const deploymentForm = ref({
   name: "",
   image: "nginx",
   namespace: "default",
+  replicas: 1,
 });
 
 const serviceForm = ref({
@@ -38,6 +40,23 @@ const serviceForm = ref({
   type: "NodePort",
 });
 
+const ingressForm = ref({
+  name: "",
+  namespace: "default",
+  serviceName: "",
+  host: "nginx.local",
+  port: 80,
+});
+
+const scaleForm = ref({
+  namespace: "",
+  name: "",
+  replicas: 1,
+});
+
+const selectedNamespaceFilter = ref("all");
+const selectedResourceDetails = ref(null);
+
 const pages = [
   { id: "dashboard", label: "Dashboard" },
   { id: "nodes", label: "Nodes" },
@@ -46,6 +65,14 @@ const pages = [
   { id: "deployments", label: "Deployments" },
   { id: "services", label: "Services" },
   { id: "ingresses", label: "Ingress" },
+];
+
+const protectedNamespaces = [
+  "default",
+  "kube-system",
+  "kube-public",
+  "kube-node-lease",
+  "ingress-nginx",
 ];
 
 function showError(message) {
@@ -125,6 +152,10 @@ async function loadIngresses() {
   ingresses.value = data.items || [];
 }
 
+function isProtectedNamespace(namespace) {
+  return protectedNamespaces.includes(namespace);
+}
+
 async function createNamespace() {
   if (!namespaceForm.value.name) {
     showError("Escreve o nome do namespace.");
@@ -146,9 +177,7 @@ async function createNamespace() {
 }
 
 async function deleteNamespace(name) {
-  const protectedNamespaces = ["default", "kube-system", "kube-public", "kube-node-lease"];
-
-  if (protectedNamespaces.includes(name)) {
+  if (isProtectedNamespace(name)) {
     showError("Não deves eliminar namespaces internos do Kubernetes.");
     return;
   }
@@ -163,7 +192,7 @@ async function deleteNamespace(name) {
     });
 
     showSuccess("Namespace eliminado com sucesso.");
-    await loadNamespaces();
+    await loadAll();
   } catch (error) {
     showError(error.message);
   }
@@ -184,6 +213,7 @@ async function createPod() {
     showSuccess("Pod criado com sucesso.");
     podForm.value.name = "";
     podForm.value.image = "nginx";
+    podForm.value.port = 80;
     await loadPods();
   } catch (error) {
     showError(error.message);
@@ -191,6 +221,11 @@ async function createPod() {
 }
 
 async function deletePod(namespace, name) {
+  if (isProtectedNamespace(namespace)) {
+    showError("Não deves eliminar pods de namespaces internos do Kubernetes.");
+    return;
+  }
+
   if (!confirm(`Eliminar pod "${name}" no namespace "${namespace}"?`)) {
     return;
   }
@@ -208,8 +243,13 @@ async function deletePod(namespace, name) {
 }
 
 async function createDeployment() {
-  if (!deploymentForm.value.name || !deploymentForm.value.image || !deploymentForm.value.namespace) {
-    showError("Preenche o nome, imagem e namespace do deployment.");
+  if (
+    !deploymentForm.value.name ||
+    !deploymentForm.value.image ||
+    !deploymentForm.value.namespace ||
+    !deploymentForm.value.replicas
+  ) {
+    showError("Preenche o nome, imagem, namespace e número de réplicas.");
     return;
   }
 
@@ -222,6 +262,8 @@ async function createDeployment() {
     showSuccess("Deployment criado com sucesso.");
     deploymentForm.value.name = "";
     deploymentForm.value.image = "nginx";
+    deploymentForm.value.replicas = 1;
+
     await loadDeployments();
     await loadPods();
   } catch (error) {
@@ -230,6 +272,11 @@ async function createDeployment() {
 }
 
 async function deleteDeployment(namespace, name) {
+  if (isProtectedNamespace(namespace)) {
+    showError("Não deves eliminar deployments de namespaces internos do Kubernetes.");
+    return;
+  }
+
   if (!confirm(`Eliminar deployment "${name}" no namespace "${namespace}"?`)) {
     return;
   }
@@ -240,6 +287,41 @@ async function deleteDeployment(namespace, name) {
     });
 
     showSuccess("Deployment eliminado com sucesso.");
+    await loadDeployments();
+    await loadPods();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function openScaleDeployment(namespace, name, currentReplicas) {
+  scaleForm.value.namespace = namespace;
+  scaleForm.value.name = name;
+  scaleForm.value.replicas = currentReplicas || 1;
+}
+
+async function scaleDeployment() {
+  if (!scaleForm.value.namespace || !scaleForm.value.name || !scaleForm.value.replicas) {
+    showError("Escolhe um deployment e indica o número de réplicas.");
+    return;
+  }
+
+  try {
+    await request(
+      `/deployments/${scaleForm.value.namespace}/${scaleForm.value.name}/scale`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          replicas: scaleForm.value.replicas,
+        }),
+      }
+    );
+
+    showSuccess("Deployment escalado com sucesso.");
+    scaleForm.value.namespace = "";
+    scaleForm.value.name = "";
+    scaleForm.value.replicas = 1;
+
     await loadDeployments();
     await loadPods();
   } catch (error) {
@@ -269,6 +351,11 @@ async function createService() {
 }
 
 async function deleteService(namespace, name) {
+  if (isProtectedNamespace(namespace)) {
+    showError("Não deves eliminar services de namespaces internos do Kubernetes.");
+    return;
+  }
+
   if (!confirm(`Eliminar service "${name}" no namespace "${namespace}"?`)) {
     return;
   }
@@ -285,7 +372,41 @@ async function deleteService(namespace, name) {
   }
 }
 
+async function createIngress() {
+  if (
+    !ingressForm.value.name ||
+    !ingressForm.value.namespace ||
+    !ingressForm.value.serviceName ||
+    !ingressForm.value.host ||
+    !ingressForm.value.port
+  ) {
+    showError("Preenche o nome, namespace, service, host e porta do ingress.");
+    return;
+  }
+
+  try {
+    await request("/ingresses", {
+      method: "POST",
+      body: JSON.stringify(ingressForm.value),
+    });
+
+    showSuccess("Ingress criado com sucesso.");
+    ingressForm.value.name = "";
+    ingressForm.value.serviceName = "";
+    ingressForm.value.host = "nginx.local";
+    ingressForm.value.port = 80;
+    await loadIngresses();
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
 async function deleteIngress(namespace, name) {
+  if (isProtectedNamespace(namespace)) {
+    showError("Não deves eliminar ingress de namespaces internos do Kubernetes.");
+    return;
+  }
+
   if (!confirm(`Eliminar ingress "${name}" no namespace "${namespace}"?`)) {
     return;
   }
@@ -300,6 +421,19 @@ async function deleteIngress(namespace, name) {
   } catch (error) {
     showError(error.message);
   }
+}
+
+async function viewResourceDetails(type, namespace, name) {
+  try {
+    const data = await request(`/resources/${type}/${namespace}/${name}`);
+    selectedResourceDetails.value = data;
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function closeResourceDetails() {
+  selectedResourceDetails.value = null;
 }
 
 function getNodeStatus(node) {
@@ -332,11 +466,78 @@ function getServicePorts(service) {
     .join(", ");
 }
 
+const filteredPods = computed(() => {
+  if (selectedNamespaceFilter.value === "all") {
+    return pods.value;
+  }
+
+  return pods.value.filter(
+    (pod) => pod.metadata.namespace === selectedNamespaceFilter.value
+  );
+});
+
+const filteredDeployments = computed(() => {
+  if (selectedNamespaceFilter.value === "all") {
+    return deployments.value;
+  }
+
+  return deployments.value.filter(
+    (deployment) => deployment.metadata.namespace === selectedNamespaceFilter.value
+  );
+});
+
+const filteredServices = computed(() => {
+  if (selectedNamespaceFilter.value === "all") {
+    return services.value;
+  }
+
+  return services.value.filter(
+    (service) => service.metadata.namespace === selectedNamespaceFilter.value
+  );
+});
+
+const filteredIngresses = computed(() => {
+  if (selectedNamespaceFilter.value === "all") {
+    return ingresses.value;
+  }
+
+  return ingresses.value.filter(
+    (ingress) => ingress.metadata.namespace === selectedNamespaceFilter.value
+  );
+});
+
+const podsRunning = computed(() => {
+  return pods.value.filter((pod) => pod.status?.phase === "Running").length;
+});
+
+const podsPending = computed(() => {
+  return pods.value.filter((pod) => pod.status?.phase === "Pending").length;
+});
+
+const podsFailed = computed(() => {
+  return pods.value.filter((pod) => pod.status?.phase === "Failed").length;
+});
+
+const nodesReady = computed(() => {
+  return nodes.value.filter((node) => getNodeStatus(node) === "Ready").length;
+});
+
+const deploymentsReady = computed(() => {
+  return deployments.value.filter((deployment) => {
+    const ready = deployment.status?.readyReplicas || 0;
+    const total = deployment.status?.replicas || 0;
+
+    return total > 0 && ready === total;
+  }).length;
+});
+
 const dashboardCards = computed(() => [
-  { title: "Nodes", value: nodes.value.length },
+  { title: "Nodes Ready", value: `${nodesReady.value} / ${nodes.value.length}` },
   { title: "Namespaces", value: namespaces.value.length },
-  { title: "Pods", value: pods.value.length },
-  { title: "Deployments", value: deployments.value.length },
+  { title: "Pods Running", value: podsRunning.value },
+  { title: "Pods Pending", value: podsPending.value },
+  { title: "Pods Failed", value: podsFailed.value },
+  { title: "Deployments Ready", value: `${deploymentsReady.value} / ${deployments.value.length}` },
   { title: "Services", value: services.value.length },
   { title: "Ingress", value: ingresses.value.length },
 ]);
@@ -402,14 +603,16 @@ onMounted(() => {
         </div>
 
         <div class="panel">
-          <h4>Estado geral</h4>
-          <p>
-            Este painel apresenta os principais recursos existentes no cluster Kubernetes.
-          </p>
-          <p>
-            Usa o menu lateral para listar, criar e eliminar recursos como namespaces,
-            pods, deployments e services.
-          </p>
+          <h4>Demonstração sugerida</h4>
+
+          <ol>
+            <li>Criar namespace <strong>demo</strong></li>
+            <li>Criar deployment <strong>nginx-deployment</strong> com imagem <strong>nginx</strong></li>
+            <li>Escalar deployment para <strong>3 réplicas</strong></li>
+            <li>Criar service do tipo <strong>NodePort</strong></li>
+            <li>Ver os pods criados automaticamente</li>
+            <li>Eliminar service, deployment e namespace</li>
+          </ol>
         </div>
       </section>
 
@@ -480,6 +683,7 @@ onMounted(() => {
               <td>
                 <button
                   class="delete-btn"
+                  :disabled="isProtectedNamespace(namespace.metadata.name)"
                   @click="deleteNamespace(namespace.metadata.name)"
                 >
                   Eliminar
@@ -505,6 +709,13 @@ onMounted(() => {
             placeholder="Imagem Docker"
           />
 
+          <input
+            v-model="podForm.port"
+            type="number"
+            min="1"
+            placeholder="Porta do container"
+          />
+
           <select v-model="podForm.namespace">
             <option
               v-for="namespace in namespaces"
@@ -520,6 +731,22 @@ onMounted(() => {
           </button>
         </div>
 
+        <div class="filter">
+          <label>Filtrar por namespace:</label>
+
+          <select v-model="selectedNamespaceFilter">
+            <option value="all">Todos</option>
+
+            <option
+              v-for="namespace in namespaces"
+              :key="namespace.metadata.name"
+              :value="namespace.metadata.name"
+            >
+              {{ namespace.metadata.name }}
+            </option>
+          </select>
+        </div>
+
         <table>
           <thead>
             <tr>
@@ -533,13 +760,13 @@ onMounted(() => {
           </thead>
 
           <tbody>
-            <tr v-for="pod in pods" :key="`${pod.metadata.namespace}-${pod.metadata.name}`">
+            <tr v-for="pod in filteredPods" :key="`${pod.metadata.namespace}-${pod.metadata.name}`">
               <td>{{ pod.metadata.name }}</td>
               <td>{{ pod.metadata.namespace }}</td>
               <td>
                 <span
                   class="badge"
-                  :class="getPodStatus(pod) === 'Running' ? 'green' : 'orange'"
+                  :class="getPodStatus(pod) === 'Running' ? 'green' : getPodStatus(pod) === 'Failed' ? 'red' : 'orange'"
                 >
                   {{ getPodStatus(pod) }}
                 </span>
@@ -548,7 +775,15 @@ onMounted(() => {
               <td>{{ pod.spec.containers?.[0]?.image }}</td>
               <td>
                 <button
+                  class="details-btn"
+                  @click="viewResourceDetails('pod', pod.metadata.namespace, pod.metadata.name)"
+                >
+                  Detalhes
+                </button>
+
+                <button
                   class="delete-btn"
+                  :disabled="isProtectedNamespace(pod.metadata.namespace)"
                   @click="deletePod(pod.metadata.namespace, pod.metadata.name)"
                 >
                   Eliminar
@@ -574,6 +809,13 @@ onMounted(() => {
             placeholder="Imagem Docker"
           />
 
+          <input
+            v-model="deploymentForm.replicas"
+            type="number"
+            min="1"
+            placeholder="Réplicas"
+          />
+
           <select v-model="deploymentForm.namespace">
             <option
               v-for="namespace in namespaces"
@@ -587,6 +829,22 @@ onMounted(() => {
           <button @click="createDeployment">
             Criar Deployment
           </button>
+        </div>
+
+        <div class="filter">
+          <label>Filtrar por namespace:</label>
+
+          <select v-model="selectedNamespaceFilter">
+            <option value="all">Todos</option>
+
+            <option
+              v-for="namespace in namespaces"
+              :key="namespace.metadata.name"
+              :value="namespace.metadata.name"
+            >
+              {{ namespace.metadata.name }}
+            </option>
+          </select>
         </div>
 
         <table>
@@ -603,7 +861,7 @@ onMounted(() => {
 
           <tbody>
             <tr
-              v-for="deployment in deployments"
+              v-for="deployment in filteredDeployments"
               :key="`${deployment.metadata.namespace}-${deployment.metadata.name}`"
             >
               <td>{{ deployment.metadata.name }}</td>
@@ -613,7 +871,26 @@ onMounted(() => {
               <td>{{ deployment.spec.template.spec.containers?.[0]?.image }}</td>
               <td>
                 <button
+                  class="details-btn"
+                  @click="viewResourceDetails('deployment', deployment.metadata.namespace, deployment.metadata.name)"
+                >
+                  Detalhes
+                </button>
+
+                <button
+                  class="scale-btn"
+                  @click="openScaleDeployment(
+                    deployment.metadata.namespace,
+                    deployment.metadata.name,
+                    deployment.status.replicas || 1
+                  )"
+                >
+                  Escalar
+                </button>
+
+                <button
                   class="delete-btn"
+                  :disabled="isProtectedNamespace(deployment.metadata.namespace)"
                   @click="deleteDeployment(deployment.metadata.namespace, deployment.metadata.name)"
                 >
                   Eliminar
@@ -622,6 +899,34 @@ onMounted(() => {
             </tr>
           </tbody>
         </table>
+
+        <div v-if="scaleForm.name" class="panel scale-panel">
+          <h4>Escalar Deployment</h4>
+
+          <p>
+            Deployment:
+            <strong>{{ scaleForm.name }}</strong>
+            no namespace
+            <strong>{{ scaleForm.namespace }}</strong>
+          </p>
+
+          <div class="form">
+            <input
+              v-model="scaleForm.replicas"
+              type="number"
+              min="1"
+              placeholder="Número de réplicas"
+            />
+
+            <button @click="scaleDeployment">
+              Confirmar escala
+            </button>
+
+            <button class="cancel-btn" @click="scaleForm.name = ''">
+              Cancelar
+            </button>
+          </div>
+        </div>
       </section>
 
       <!-- SERVICES -->
@@ -647,17 +952,35 @@ onMounted(() => {
           <input
             v-model="serviceForm.port"
             type="number"
+            min="1"
             placeholder="Porta"
           />
 
           <select v-model="serviceForm.type">
             <option value="ClusterIP">ClusterIP</option>
             <option value="NodePort">NodePort</option>
+            <option value="LoadBalancer">LoadBalancer</option>
           </select>
 
           <button @click="createService">
             Criar Service
           </button>
+        </div>
+
+        <div class="filter">
+          <label>Filtrar por namespace:</label>
+
+          <select v-model="selectedNamespaceFilter">
+            <option value="all">Todos</option>
+
+            <option
+              v-for="namespace in namespaces"
+              :key="namespace.metadata.name"
+              :value="namespace.metadata.name"
+            >
+              {{ namespace.metadata.name }}
+            </option>
+          </select>
         </div>
 
         <table>
@@ -674,7 +997,7 @@ onMounted(() => {
 
           <tbody>
             <tr
-              v-for="service in services"
+              v-for="service in filteredServices"
               :key="`${service.metadata.namespace}-${service.metadata.name}`"
             >
               <td>{{ service.metadata.name }}</td>
@@ -684,7 +1007,15 @@ onMounted(() => {
               <td>{{ getServicePorts(service) }}</td>
               <td>
                 <button
+                  class="details-btn"
+                  @click="viewResourceDetails('service', service.metadata.namespace, service.metadata.name)"
+                >
+                  Detalhes
+                </button>
+
+                <button
                   class="delete-btn"
+                  :disabled="isProtectedNamespace(service.metadata.namespace)"
                   @click="deleteService(service.metadata.namespace, service.metadata.name)"
                 >
                   Eliminar
@@ -701,9 +1032,62 @@ onMounted(() => {
 
         <div class="panel">
           <p>
-            Nesta versão, o sistema lista e elimina Ingress. Para criar Ingress no Kind,
-            é necessário instalar previamente um Ingress Controller, como o NGINX Ingress.
+            Para criar Ingress no Kind, é necessário ter instalado o NGINX Ingress Controller.
           </p>
+        </div>
+
+        <div class="form">
+          <input
+            v-model="ingressForm.name"
+            placeholder="Nome do ingress"
+          />
+
+          <select v-model="ingressForm.namespace">
+            <option
+              v-for="namespace in namespaces"
+              :key="namespace.metadata.name"
+              :value="namespace.metadata.name"
+            >
+              {{ namespace.metadata.name }}
+            </option>
+          </select>
+
+          <input
+            v-model="ingressForm.serviceName"
+            placeholder="Nome do service"
+          />
+
+          <input
+            v-model="ingressForm.host"
+            placeholder="Host ex: nginx.local"
+          />
+
+          <input
+            v-model="ingressForm.port"
+            type="number"
+            min="1"
+            placeholder="Porta"
+          />
+
+          <button @click="createIngress">
+            Criar Ingress
+          </button>
+        </div>
+
+        <div class="filter">
+          <label>Filtrar por namespace:</label>
+
+          <select v-model="selectedNamespaceFilter">
+            <option value="all">Todos</option>
+
+            <option
+              v-for="namespace in namespaces"
+              :key="namespace.metadata.name"
+              :value="namespace.metadata.name"
+            >
+              {{ namespace.metadata.name }}
+            </option>
+          </select>
         </div>
 
         <table>
@@ -719,7 +1103,7 @@ onMounted(() => {
 
           <tbody>
             <tr
-              v-for="ingress in ingresses"
+              v-for="ingress in filteredIngresses"
               :key="`${ingress.metadata.namespace}-${ingress.metadata.name}`"
             >
               <td>{{ ingress.metadata.name }}</td>
@@ -734,7 +1118,15 @@ onMounted(() => {
               </td>
               <td>
                 <button
+                  class="details-btn"
+                  @click="viewResourceDetails('ingress', ingress.metadata.namespace, ingress.metadata.name)"
+                >
+                  Detalhes
+                </button>
+
+                <button
                   class="delete-btn"
+                  :disabled="isProtectedNamespace(ingress.metadata.namespace)"
                   @click="deleteIngress(ingress.metadata.namespace, ingress.metadata.name)"
                 >
                   Eliminar
@@ -744,6 +1136,20 @@ onMounted(() => {
           </tbody>
         </table>
       </section>
+
+      <div v-if="selectedResourceDetails" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>Detalhes do Recurso</h3>
+
+            <button class="cancel-btn" @click="closeResourceDetails">
+              Fechar
+            </button>
+          </div>
+
+          <pre>{{ JSON.stringify(selectedResourceDetails, null, 2) }}</pre>
+        </div>
+      </div>
     </main>
   </div>
 </template>
@@ -870,7 +1276,7 @@ nav button.active {
 }
 
 .card strong {
-  font-size: 34px;
+  font-size: 28px;
 }
 
 .panel {
@@ -930,6 +1336,24 @@ nav button.active {
   cursor: pointer;
 }
 
+.filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.filter label {
+  font-weight: bold;
+  color: #374151;
+}
+
+.filter select {
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -942,6 +1366,7 @@ td {
   border-bottom: 1px solid #e5e7eb;
   text-align: left;
   font-size: 14px;
+  vertical-align: middle;
 }
 
 th {
@@ -978,10 +1403,91 @@ th {
   padding: 8px 11px;
   border-radius: 7px;
   cursor: pointer;
+  margin-right: 6px;
 }
 
 .delete-btn:hover {
   background: #b91c1c;
+}
+
+.delete-btn:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.details-btn {
+  background: #4b5563;
+  color: white;
+  border: none;
+  padding: 8px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+.scale-btn {
+  background: #7c3aed;
+  color: white;
+  border: none;
+  padding: 8px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+
+.cancel-btn {
+  background: #6b7280;
+  color: white;
+  border: none;
+  padding: 8px 11px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.scale-panel {
+  margin-top: 24px;
+  border: 1px solid #c4b5fd;
+  background: #f5f3ff;
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(17, 24, 39, 0.75);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 32px;
+  z-index: 1000;
+}
+
+.modal-content {
+  width: 90%;
+  max-width: 1000px;
+  max-height: 85vh;
+  overflow: auto;
+  background: white;
+  border-radius: 14px;
+  padding: 24px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.modal-content pre {
+  background: #111827;
+  color: #f9fafb;
+  padding: 18px;
+  border-radius: 10px;
+  overflow: auto;
+  font-size: 13px;
 }
 
 @media (max-width: 900px) {
