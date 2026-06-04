@@ -14,6 +14,11 @@ const pods = ref([]);
 const deployments = ref([]);
 const services = ref([]);
 const ingresses = ref([]);
+const nodeMetrics = ref([]);
+const podMetrics = ref([]);
+const podLogs = ref("");
+const selectedLogPod = ref("");
+const selectedLogNamespace = ref("");
 
 const namespaceForm = ref({
   name: "",
@@ -114,6 +119,8 @@ async function loadAll() {
       loadDeployments(),
       loadServices(),
       loadIngresses(),
+      loadNodeMetrics(),
+      loadPodMetrics(),
     ]);
   } catch (error) {
     showError(error.message);
@@ -150,6 +157,36 @@ async function loadServices() {
 async function loadIngresses() {
   const data = await request("/ingresses");
   ingresses.value = data.items || [];
+}
+
+async function loadNodeMetrics() {
+  try {
+    const data = await request("/metrics/nodes");
+
+    nodeMetrics.value =
+      data.items ||
+      data.metrics ||
+      [];
+  } catch (error) {
+    console.error(error);
+
+    nodeMetrics.value = [];
+  }
+}
+
+async function loadPodMetrics() {
+  try {
+    const data = await request("/metrics/pods");
+
+    podMetrics.value =
+      data.items ||
+      data.metrics ||
+      [];
+  } catch (error) {
+    console.error(error);
+
+    podMetrics.value = [];
+  }
 }
 
 function isProtectedNamespace(namespace) {
@@ -431,6 +468,42 @@ function closeResourceDetails() {
   selectedResourceDetails.value = null;
 }
 
+async function viewPodLogs(namespace, name) {
+  try {
+    const data = await request(`/pods/${namespace}/${name}/logs`);
+    podLogs.value = data.logs || "Sem logs disponíveis.";
+    selectedLogPod.value = name;
+    selectedLogNamespace.value = namespace;
+  } catch (error) {
+    showError(error.message);
+  }
+}
+
+function closeLogs() {
+  podLogs.value = "";
+  selectedLogPod.value = "";
+  selectedLogNamespace.value = "";
+}
+
+function exportYaml(resource) {
+  const yamlContent = JSON.stringify(resource, null, 2);
+
+  const blob = new Blob([yamlContent], {
+    type: "text/plain;charset=utf-8",
+  });
+
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${resource.metadata.name}.yaml`;
+
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
+
 function getNodeStatus(node) {
   const readyCondition = node.status?.conditions?.find(
     (condition) => condition.type === "Ready"
@@ -594,6 +667,18 @@ onMounted(() => {
           <div v-for="card in dashboardCards" :key="card.title" class="card">
             <span>{{ card.title }}</span>
             <strong>{{ card.value }}</strong>
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-box">
+            <span>CPU Nodes</span>
+            <strong>{{ nodeMetrics.length }}</strong>
+          </div>
+
+          <div class="metric-box">
+            <span>Pods Metrics</span>
+            <strong>{{ podMetrics.length }}</strong>
           </div>
         </div>
 
@@ -774,6 +859,20 @@ onMounted(() => {
                   @click="viewResourceDetails('pod', pod.metadata.namespace, pod.metadata.name)"
                 >
                   Detalhes
+                </button>
+
+                <button
+                  class="scale-btn"
+                  @click="viewPodLogs(pod.metadata.namespace, pod.metadata.name)"
+                >
+                  Logs
+                </button>
+
+                <button
+                  class="details-btn"
+                  @click="exportYaml(pod)"
+                >
+                  Export
                 </button>
 
                 <button
@@ -1131,7 +1230,24 @@ onMounted(() => {
         </table>
       </section>
 
-      <div v-if="selectedResourceDetails" class="modal">
+      
+      <div v-if="podLogs" class="modal">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>
+              Logs - {{ selectedLogPod }}
+            </h3>
+
+            <button class="cancel-btn" @click="closeLogs">
+              Fechar
+            </button>
+          </div>
+
+          <pre>{{ podLogs }}</pre>
+        </div>
+      </div>
+
+<div v-if="selectedResourceDetails" class="modal">
         <div class="modal-content">
           <div class="modal-header">
             <h3>Detalhes do Recurso</h3>
@@ -1154,31 +1270,31 @@ onMounted(() => {
 }
 
 :root {
-  --primary: #8b7355;
-  --primary-light: #b59a7a;
+  --primary: #8f7458;
+  --primary-light: #b79d84;
 
   --background:
     linear-gradient(
       135deg,
-      #f6f3ef 0%,
-      #ece8e1 45%,
-      #e4e0d9 100%
+      #f5f1eb 0%,
+      #ebe5de 45%,
+      #ddd7cf 100%
     );
 
   --card:
-    rgba(255, 255, 255, 0.72);
+    rgba(255,255,255,0.58);
 
   --border:
     rgba(255,255,255,0.45);
 
-  --text: #2d2d2d;
-  --text-soft: #7a7a7a;
+  --text: #2c2c2c;
+  --text-soft: #777;
 
   --shadow:
-    0 10px 40px rgba(80, 65, 50, 0.08);
+    0 10px 40px rgba(100, 80, 60, 0.08);
 
   --shadow-hover:
-    0 20px 45px rgba(80,65,50,0.14);
+    0 18px 45px rgba(100,80,60,0.14);
 }
 
 body {
@@ -1192,6 +1308,7 @@ body {
   display: flex;
   background: var(--background);
   color: var(--text);
+
   font-family:
     Inter,
     SF Pro Display,
@@ -1202,15 +1319,15 @@ body {
 /* SIDEBAR */
 
 .sidebar {
-  width: 285px;
+  width: 290px;
 
   background:
-    rgba(255,255,255,0.55);
+    rgba(255,255,255,0.52);
 
   backdrop-filter: blur(18px);
 
   border-right:
-    1px solid rgba(255,255,255,0.5);
+    1px solid rgba(255,255,255,0.55);
 
   padding: 34px 24px;
 
@@ -1247,7 +1364,7 @@ body {
   font-size: 15px;
 }
 
-/* MENU */
+/* NAV */
 
 nav {
   display: flex;
@@ -1260,7 +1377,7 @@ nav button {
 
   background: transparent;
 
-  color: #5e5e5e;
+  color: #555;
 
   padding: 16px 18px;
 
@@ -1274,12 +1391,12 @@ nav button {
 
   cursor: pointer;
 
-  transition: 0.28s ease;
+  transition: all 0.25s ease;
 }
 
 nav button:hover {
   background:
-    rgba(255,255,255,0.65);
+    rgba(255,255,255,0.55);
 
   transform: translateX(4px);
 }
@@ -1288,23 +1405,21 @@ nav button.active {
   background:
     linear-gradient(
       135deg,
-      #8b7355,
-      #b59a7a
+      #8f7458,
+      #b79d84
     );
 
   color: white;
 
   box-shadow:
-    0 10px 30px rgba(139,115,85,0.25);
+    0 12px 30px rgba(143,116,88,0.25);
 }
 
 /* CONTENT */
 
 .content {
   flex: 1;
-
   padding: 36px;
-
   overflow-x: auto;
 }
 
@@ -1315,7 +1430,7 @@ nav button.active {
   justify-content: space-between;
   align-items: center;
 
-  margin-bottom: 28px;
+  margin-bottom: 30px;
 }
 
 .topbar h2 {
@@ -1327,7 +1442,7 @@ nav button.active {
 
   letter-spacing: -2px;
 
-  color: #2f2f2f;
+  color: #2d2d2d;
 }
 
 .topbar p {
@@ -1350,15 +1465,15 @@ nav button.active {
 
   cursor: pointer;
 
-  transition: 0.25s ease;
+  transition: all 0.25s ease;
 }
 
 .refresh-btn {
   background:
     linear-gradient(
       135deg,
-      #8b7355,
-      #b59a7a
+      #8f7458,
+      #b79d84
     );
 
   color: white;
@@ -1370,7 +1485,7 @@ nav button.active {
   font-weight: 700;
 
   box-shadow:
-    0 12px 28px rgba(139,115,85,0.25);
+    0 12px 30px rgba(143,116,88,0.25);
 }
 
 .refresh-btn:hover {
@@ -1381,9 +1496,9 @@ nav button.active {
 
 .section {
   background:
-    rgba(255,255,255,0.55);
+    rgba(255,255,255,0.52);
 
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(18px);
 
   border:
     1px solid rgba(255,255,255,0.45);
@@ -1421,19 +1536,19 @@ nav button.active {
 
 .card {
   background:
-    rgba(255,255,255,0.65);
+    rgba(255,255,255,0.62);
 
   border:
-    1px solid rgba(255,255,255,0.5);
+    1px solid rgba(255,255,255,0.55);
 
-  border-radius: 24px;
+  border-radius: 26px;
 
   padding: 28px;
 
   box-shadow:
-    0 10px 25px rgba(0,0,0,0.04);
+    0 10px 30px rgba(0,0,0,0.05);
 
-  transition: 0.25s ease;
+  transition: all 0.28s ease;
 }
 
 .card:hover {
@@ -1465,10 +1580,10 @@ nav button.active {
 
 .panel {
   background:
-    rgba(255,255,255,0.55);
+    rgba(255,255,255,0.48);
 
   border:
-    1px solid rgba(255,255,255,0.4);
+    1px solid rgba(255,255,255,0.45);
 
   border-radius: 22px;
 
@@ -1518,7 +1633,7 @@ nav button.active {
 .form input,
 .form select {
   background:
-    rgba(255,255,255,0.8);
+    rgba(255,255,255,0.78);
 
   border:
     1px solid #ddd4ca;
@@ -1550,8 +1665,8 @@ nav button.active {
   background:
     linear-gradient(
       135deg,
-      #8b7355,
-      #b59a7a
+      #8f7458,
+      #b79d84
     );
 
   color: white;
@@ -1597,10 +1712,10 @@ table {
 
   overflow: hidden;
 
-  border-radius: 20px;
+  border-radius: 22px;
 
   background:
-    rgba(255,255,255,0.65);
+    rgba(255,255,255,0.58);
 }
 
 th {
@@ -1623,6 +1738,10 @@ td {
     1px solid rgba(0,0,0,0.05);
 
   font-size: 14px;
+}
+
+tr {
+  transition: 0.2s ease;
 }
 
 tr:hover {
@@ -1699,6 +1818,13 @@ tr:hover {
   border-radius: 12px;
 }
 
+.details-btn:hover,
+.scale-btn:hover,
+.delete-btn:hover,
+.cancel-btn:hover {
+  transform: translateY(-2px);
+}
+
 /* MODAL */
 
 .modal {
@@ -1731,7 +1857,7 @@ tr:hover {
   background:
     rgba(255,255,255,0.9);
 
-  border-radius: 26px;
+  border-radius: 28px;
 
   padding: 28px;
 
@@ -1789,4 +1915,32 @@ tr:hover {
     font-size: 32px;
   }
 }
+
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+  gap: 18px;
+  margin-bottom: 26px;
+}
+
+.metric-box {
+  background: rgba(255,255,255,0.58);
+  border-radius: 22px;
+  padding: 24px;
+  border: 1px solid rgba(255,255,255,0.45);
+  box-shadow: var(--shadow);
+}
+
+.metric-box span {
+  display:block;
+  margin-bottom:10px;
+  color: var(--text-soft);
+}
+
+.metric-box strong {
+  font-size: 36px;
+  color: var(--primary);
+}
+
 </style>

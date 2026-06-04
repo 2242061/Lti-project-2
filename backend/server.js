@@ -17,11 +17,17 @@ const PROTECTED_NAMESPACES = [
 ];
 
 function isSafeKubernetesName(name) {
-  return typeof name === "string" && /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name);
+  return (
+    typeof name === "string" &&
+    /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)
+  );
 }
 
 function isSafeImageName(image) {
-  return typeof image === "string" && /^[a-zA-Z0-9._/:@-]+$/.test(image);
+  return (
+    typeof image === "string" &&
+    /^[a-zA-Z0-9._/:@-]+$/.test(image)
+  );
 }
 
 function isPositiveNumber(value) {
@@ -59,7 +65,7 @@ function runKubectl(command, res) {
 function blockProtectedNamespace(namespace, res) {
   if (PROTECTED_NAMESPACES.includes(namespace)) {
     res.status(400).json({
-      error: `O namespace "${namespace}" é interno/protegido e não deve ser alterado ou eliminado.`,
+      error: `O namespace "${namespace}" é protegido.`,
     });
 
     return true;
@@ -70,19 +76,8 @@ function blockProtectedNamespace(namespace, res) {
 
 app.get("/", (req, res) => {
   res.json({
-    message: "Backend TL2 Kubernetes a funcionar",
+    message: "Backend Kubernetes TL2 online",
   });
-});
-
-/* =========================
-   DASHBOARD / CLUSTER
-========================= */
-
-app.get("/api/cluster/summary", async (req, res) => {
-  runKubectl(
-    "kubectl get nodes,namespaces,pods,deployments,services,ingress -A -o json",
-    res
-  );
 });
 
 /* =========================
@@ -106,33 +101,27 @@ app.post("/api/namespaces", (req, res) => {
 
   if (!isSafeKubernetesName(name)) {
     return res.status(400).json({
-      error: "Nome de namespace inválido. Usa apenas letras minúsculas, números e hífens.",
+      error: "Nome inválido.",
     });
   }
 
-  if (PROTECTED_NAMESPACES.includes(name)) {
-    return res.status(400).json({
-      error: "Esse nome está reservado para namespaces internos do Kubernetes.",
-    });
-  }
-
-  runKubectl(`kubectl create namespace ${name} -o json`, res);
+  runKubectl(
+    `kubectl create namespace ${name} -o json`,
+    res
+  );
 });
 
 app.delete("/api/namespaces/:name", (req, res) => {
   const { name } = req.params;
 
-  if (!isSafeKubernetesName(name)) {
-    return res.status(400).json({
-      error: "Nome de namespace inválido.",
-    });
-  }
-
   if (blockProtectedNamespace(name, res)) {
     return;
   }
 
-  runKubectl(`kubectl delete namespace ${name}`, res);
+  runKubectl(
+    `kubectl delete namespace ${name}`,
+    res
+  );
 });
 
 /* =========================
@@ -151,19 +140,25 @@ app.post("/api/pods", (req, res) => {
     port,
   } = req.body;
 
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
+  if (
+    !isSafeKubernetesName(name) ||
+    !isSafeKubernetesName(namespace)
+  ) {
     return res.status(400).json({
-      error: "Nome do pod ou namespace inválido.",
+      error: "Nome inválido.",
     });
   }
 
   if (!isSafeImageName(image)) {
     return res.status(400).json({
-      error: "Imagem Docker inválida.",
+      error: "Imagem inválida.",
     });
   }
 
-  let command = `kubectl run ${name} --image=${image} -n ${namespace}`;
+  let command =
+    `kubectl run ${name} ` +
+    `--image=${image} ` +
+    `-n ${namespace}`;
 
   if (port && isPositiveNumber(port)) {
     command += ` --port=${port}`;
@@ -177,26 +172,25 @@ app.post("/api/pods", (req, res) => {
 app.delete("/api/pods/:namespace/:name", (req, res) => {
   const { namespace, name } = req.params;
 
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
-    return res.status(400).json({
-      error: "Nome do pod ou namespace inválido.",
-    });
+  if (blockProtectedNamespace(namespace, res)) {
+    return;
   }
 
-  const protectedPodNamespaces = [
-    "kube-system",
-    "kube-public",
-    "kube-node-lease",
-    "ingress-nginx",
-  ];
+  runKubectl(
+    `kubectl delete pod ${name} -n ${namespace}`,
+    res
+  );
+});
 
-  if (protectedPodNamespaces.includes(namespace)) {
-    return res.status(400).json({
-      error: `Não é permitido eliminar pods do namespace interno "${namespace}".`,
-    });
-  }
+/* LOGS DOS PODS */
 
-  runKubectl(`kubectl delete pod ${name} -n ${namespace}`, res);
+app.get("/api/pods/:namespace/:name/logs", (req, res) => {
+  const { namespace, name } = req.params;
+
+  runKubectl(
+    `kubectl logs ${name} -n ${namespace}`,
+    res
+  );
 });
 
 /* =========================
@@ -204,7 +198,10 @@ app.delete("/api/pods/:namespace/:name", (req, res) => {
 ========================= */
 
 app.get("/api/deployments", (req, res) => {
-  runKubectl("kubectl get deployments -A -o json", res);
+  runKubectl(
+    "kubectl get deployments -A -o json",
+    res
+  );
 });
 
 app.post("/api/deployments", (req, res) => {
@@ -215,77 +212,65 @@ app.post("/api/deployments", (req, res) => {
     replicas = 1,
   } = req.body;
 
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
+  if (
+    !isSafeKubernetesName(name) ||
+    !isSafeKubernetesName(namespace)
+  ) {
     return res.status(400).json({
-      error: "Nome do deployment ou namespace inválido.",
-    });
-  }
-
-  if (!isSafeImageName(image)) {
-    return res.status(400).json({
-      error: "Imagem Docker inválida.",
-    });
-  }
-
-  if (!isPositiveNumber(replicas)) {
-    return res.status(400).json({
-      error: "O número de réplicas tem de ser superior a 0.",
+      error: "Nome inválido.",
     });
   }
 
   const command =
-    `kubectl create deployment ${name} --image=${image} -n ${namespace} -o json ` +
-    `&& kubectl scale deployment ${name} --replicas=${replicas} -n ${namespace}`;
+    `kubectl create deployment ${name} ` +
+    `--image=${image} ` +
+    `-n ${namespace} -o json ` +
+    `&& kubectl scale deployment ${name} ` +
+    `--replicas=${replicas} -n ${namespace}`;
 
   runKubectl(command, res);
 });
 
-app.patch("/api/deployments/:namespace/:name/scale", (req, res) => {
-  const { namespace, name } = req.params;
-  const { replicas } = req.body;
+app.patch(
+  "/api/deployments/:namespace/:name/scale",
+  (req, res) => {
+    const { namespace, name } = req.params;
+    const { replicas } = req.body;
 
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
-    return res.status(400).json({
-      error: "Nome do deployment ou namespace inválido.",
-    });
+    runKubectl(
+      `kubectl scale deployment ${name} ` +
+        `--replicas=${replicas} ` +
+        `-n ${namespace}`,
+      res
+    );
   }
+);
 
-  if (!isPositiveNumber(replicas)) {
-    return res.status(400).json({
-      error: "O número de réplicas tem de ser superior a 0.",
-    });
+app.delete(
+  "/api/deployments/:namespace/:name",
+  (req, res) => {
+    const { namespace, name } = req.params;
+
+    if (blockProtectedNamespace(namespace, res)) {
+      return;
+    }
+
+    runKubectl(
+      `kubectl delete deployment ${name} -n ${namespace}`,
+      res
+    );
   }
-
-  runKubectl(
-    `kubectl scale deployment ${name} --replicas=${replicas} -n ${namespace}`,
-    res
-  );
-});
-
-app.delete("/api/deployments/:namespace/:name", (req, res) => {
-  const { namespace, name } = req.params;
-
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
-    return res.status(400).json({
-      error: "Nome do deployment ou namespace inválido.",
-    });
-  }
-
-  if (["kube-system", "kube-public", "kube-node-lease", "ingress-nginx"].includes(namespace)) {
-  return res.status(400).json({
-    error: `Não é permitido eliminar deployments do namespace interno "${namespace}".`,
-  });
-}
-
-  runKubectl(`kubectl delete deployment ${name} -n ${namespace}`, res);
-});
+);
 
 /* =========================
    SERVICES
 ========================= */
 
 app.get("/api/services", (req, res) => {
-  runKubectl("kubectl get services -A -o json", res);
+  runKubectl(
+    "kubectl get services -A -o json",
+    res
+  );
 });
 
 app.post("/api/services", (req, res) => {
@@ -296,26 +281,11 @@ app.post("/api/services", (req, res) => {
     type = "NodePort",
   } = req.body;
 
-  if (!isSafeKubernetesName(deploymentName) || !isSafeKubernetesName(namespace)) {
-    return res.status(400).json({
-      error: "Nome do deployment ou namespace inválido.",
-    });
-  }
-
-  if (!isPositiveNumber(port)) {
-    return res.status(400).json({
-      error: "A porta tem de ser um número válido.",
-    });
-  }
-
-  if (!["ClusterIP", "NodePort", "LoadBalancer"].includes(type)) {
-    return res.status(400).json({
-      error: "Tipo de service inválido.",
-    });
-  }
-
   runKubectl(
-    `kubectl expose deployment ${deploymentName} -n ${namespace} --type=${type} --port=${port} -o json`,
+    `kubectl expose deployment ${deploymentName} ` +
+      `-n ${namespace} ` +
+      `--type=${type} ` +
+      `--port=${port} -o json`,
     res
   );
 });
@@ -323,19 +293,14 @@ app.post("/api/services", (req, res) => {
 app.delete("/api/services/:namespace/:name", (req, res) => {
   const { namespace, name } = req.params;
 
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
-    return res.status(400).json({
-      error: "Nome do service ou namespace inválido.",
-    });
+  if (blockProtectedNamespace(namespace, res)) {
+    return;
   }
 
-  if (["kube-system", "kube-public", "kube-node-lease", "ingress-nginx"].includes(namespace)) {
-  return res.status(400).json({
-    error: `Não é permitido eliminar services do namespace interno "${namespace}".`,
-  });
-}
-
-  runKubectl(`kubectl delete service ${name} -n ${namespace}`, res);
+  runKubectl(
+    `kubectl delete service ${name} -n ${namespace}`,
+    res
+  );
 });
 
 /* =========================
@@ -343,39 +308,20 @@ app.delete("/api/services/:namespace/:name", (req, res) => {
 ========================= */
 
 app.get("/api/ingresses", (req, res) => {
-  runKubectl("kubectl get ingress -A -o json", res);
+  runKubectl(
+    "kubectl get ingress -A -o json",
+    res
+  );
 });
 
 app.post("/api/ingresses", (req, res) => {
   const {
     name,
-    namespace = "default",
+    namespace,
     serviceName,
     host,
-    port = 80,
+    port,
   } = req.body;
-
-  if (
-    !isSafeKubernetesName(name) ||
-    !isSafeKubernetesName(namespace) ||
-    !isSafeKubernetesName(serviceName)
-  ) {
-    return res.status(400).json({
-      error: "Nome do ingress, namespace ou service inválido.",
-    });
-  }
-
-  if (!host || typeof host !== "string") {
-    return res.status(400).json({
-      error: "Host inválido.",
-    });
-  }
-
-  if (!isPositiveNumber(port)) {
-    return res.status(400).json({
-      error: "Porta inválida.",
-    });
-  }
 
   const yaml = `
 apiVersion: networking.k8s.io/v1
@@ -386,19 +332,20 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: ${host}
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: ${serviceName}
-                port:
-                  number: ${port}
+  - host: ${host}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${serviceName}
+            port:
+              number: ${port}
 `;
 
-  const command = `echo "${yaml.replace(/"/g, '\\"')}" | kubectl apply -f -`;
+  const command =
+    `echo '${yaml}' | kubectl apply -f -`;
 
   runKubectl(command, res);
 });
@@ -406,48 +353,70 @@ spec:
 app.delete("/api/ingresses/:namespace/:name", (req, res) => {
   const { namespace, name } = req.params;
 
-  if (!isSafeKubernetesName(name) || !isSafeKubernetesName(namespace)) {
-    return res.status(400).json({
-      error: "Nome do ingress ou namespace inválido.",
-    });
-  }
-
   if (blockProtectedNamespace(namespace, res)) {
     return;
   }
 
-  runKubectl(`kubectl delete ingress ${name} -n ${namespace}`, res);
+  runKubectl(
+    `kubectl delete ingress ${name} -n ${namespace}`,
+    res
+  );
 });
 
 /* =========================
-   DETALHES DE RECURSOS
+   RESOURCE DETAILS
 ========================= */
 
-app.get("/api/resources/:type/:namespace/:name", (req, res) => {
-  const { type, namespace, name } = req.params;
+app.get(
+  "/api/resources/:type/:namespace/:name",
+  (req, res) => {
+    const { type, namespace, name } = req.params;
 
-  const allowedTypes = [
-    "pod",
-    "deployment",
-    "service",
-    "ingress",
-  ];
-
-  if (!allowedTypes.includes(type)) {
-    return res.status(400).json({
-      error: "Tipo de recurso inválido.",
-    });
+    runKubectl(
+      `kubectl get ${type} ${name} ` +
+        `-n ${namespace} -o json`,
+      res
+    );
   }
+);
 
-  if (!isSafeKubernetesName(namespace) || !isSafeKubernetesName(name)) {
-    return res.status(400).json({
-      error: "Nome do recurso ou namespace inválido.",
-    });
+/* =========================
+   YAML EXPORT
+========================= */
+
+app.get(
+  "/api/resources/:type/:namespace/:name/yaml",
+  (req, res) => {
+    const { type, namespace, name } = req.params;
+
+    runKubectl(
+      `kubectl get ${type} ${name} ` +
+        `-n ${namespace} -o yaml`,
+      res
+    );
   }
+);
 
-  runKubectl(`kubectl get ${type} ${name} -n ${namespace} -o json`, res);
+/* =========================
+   METRICS
+========================= */
+
+app.get("/api/metrics/nodes", (req, res) => {
+  runKubectl(
+    "kubectl top nodes --no-headers",
+    res
+  );
+});
+
+app.get("/api/metrics/pods", (req, res) => {
+  runKubectl(
+    "kubectl top pods -A --no-headers",
+    res
+  );
 });
 
 app.listen(PORT, () => {
-  console.log(`Servidor TL2 Kubernetes a correr em http://localhost:${PORT}`);
+  console.log(
+    `Servidor Kubernetes TL2 em http://localhost:${PORT}`
+  );
 });
