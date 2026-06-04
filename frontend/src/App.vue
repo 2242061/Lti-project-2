@@ -80,6 +80,12 @@ const protectedNamespaces = [
   "ingress-nginx",
 ];
 
+const protectedResourceNamespaces = [
+  "kube-system",
+  "kube-public",
+  "kube-node-lease",
+  "ingress-nginx",
+];
 function showError(message) {
   errorMessage.value = message;
   successMessage.value = "";
@@ -193,6 +199,10 @@ function isProtectedNamespace(namespace) {
   return protectedNamespaces.includes(namespace);
 }
 
+function isProtectedResourceNamespace(namespace) {
+  return protectedResourceNamespaces.includes(namespace);
+}
+
 async function createNamespace() {
   if (!namespaceForm.value.name) {
     showError("Escreve o nome do namespace.");
@@ -304,7 +314,7 @@ async function createDeployment() {
 }
 
 async function deleteDeployment(namespace, name) {
-  if (isProtectedNamespace(namespace)) {
+  if (isProtectedResourceNamespace(namespace)) {
     showError("Não deves eliminar deployments de namespaces internos do Kubernetes.");
     return;
   }
@@ -321,6 +331,7 @@ async function deleteDeployment(namespace, name) {
     showSuccess("Deployment eliminado com sucesso.");
     await loadDeployments();
     await loadPods();
+    await loadServices();
   } catch (error) {
     showError(error.message);
   }
@@ -383,7 +394,7 @@ async function createService() {
 }
 
 async function deleteService(namespace, name) {
-  if (isProtectedNamespace(namespace)) {
+  if (isProtectedResourceNamespace(namespace)) {
     showError("Não deves eliminar services de namespaces internos do Kubernetes.");
     return;
   }
@@ -391,6 +402,7 @@ async function deleteService(namespace, name) {
   if (!confirm(`Eliminar service "${name}" no namespace "${namespace}"?`)) {
     return;
   }
+
 
   try {
     await request(`/services/${namespace}/${name}`, {
@@ -434,7 +446,7 @@ async function createIngress() {
 }
 
 async function deleteIngress(namespace, name) {
-  if (isProtectedNamespace(namespace)) {
+  if (isProtectedResourceNamespace(namespace)) {
     showError("Não deves eliminar ingress de namespaces internos do Kubernetes.");
     return;
   }
@@ -682,18 +694,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <div class="panel">
-          <h4>Demonstração sugerida</h4>
-
-          <ol>
-            <li>Criar namespace <strong>demo</strong></li>
-            <li>Criar deployment <strong>nginx-deployment</strong> com imagem <strong>nginx</strong></li>
-            <li>Escalar deployment para <strong>3 réplicas</strong></li>
-            <li>Criar service do tipo <strong>NodePort</strong></li>
-            <li>Ver os pods criados automaticamente</li>
-            <li>Eliminar service, deployment e namespace</li>
-          </ol>
-        </div>
+        
       </section>
 
       <!-- NODES -->
@@ -877,6 +878,7 @@ onMounted(() => {
 
                 <button
   class="delete-btn"
+  :disabled="isProtectedResourceNamespace(pod.metadata.namespace)"
   @click="deletePod(pod.metadata.namespace, pod.metadata.name)"
 >
   Eliminar
@@ -980,14 +982,13 @@ onMounted(() => {
                 >
                   Escalar
                 </button>
-
-                <button
-                  class="delete-btn"
-                  :disabled="isProtectedNamespace(deployment.metadata.namespace)"
-                  @click="deleteDeployment(deployment.metadata.namespace, deployment.metadata.name)"
-                >
-                  Eliminar
-                </button>
+          <button
+  class="delete-btn"
+  :disabled="isProtectedResourceNamespace(deployment.metadata.namespace)"
+  @click="deleteDeployment(deployment.metadata.namespace, deployment.metadata.name)"
+>
+  Eliminar
+</button>
               </td>
             </tr>
           </tbody>
@@ -1108,7 +1109,7 @@ onMounted(() => {
 
                 <button
                   class="delete-btn"
-                  :disabled="isProtectedNamespace(service.metadata.namespace)"
+                  :disabled="isProtectedResourceNamespace(service.metadata.namespace)"
                   @click="deleteService(service.metadata.namespace, service.metadata.name)"
                 >
                   Eliminar
@@ -1123,11 +1124,7 @@ onMounted(() => {
       <section v-if="activePage === 'ingresses'" class="section">
         <h3>Ingress</h3>
 
-        <div class="panel">
-          <p>
-            Para criar Ingress no Kind, é necessário ter instalado o NGINX Ingress Controller.
-          </p>
-        </div>
+        
 
         <div class="form">
           <input
@@ -1219,7 +1216,7 @@ onMounted(() => {
 
                 <button
                   class="delete-btn"
-                  :disabled="isProtectedNamespace(ingress.metadata.namespace)"
+                  :disabled="isProtectedResourceNamespace(ingress.metadata.namespace)"
                   @click="deleteIngress(ingress.metadata.namespace, ingress.metadata.name)"
                 >
                   Eliminar
@@ -1269,32 +1266,19 @@ onMounted(() => {
   box-sizing: border-box;
 }
 
-:root {
+.app {
   --primary: #8f7458;
   --primary-light: #b79d84;
 
-  --background:
-    linear-gradient(
-      135deg,
-      #f5f1eb 0%,
-      #ebe5de 45%,
-      #ddd7cf 100%
-    );
+  --background: #f3eee8;
+  --card: #ffffff;
+  --border: #ded6ce;
 
-  --card:
-    rgba(255,255,255,0.58);
+  --text: #1f2937;
+  --text-soft: #4b5563;
 
-  --border:
-    rgba(255,255,255,0.45);
-
-  --text: #2c2c2c;
-  --text-soft: #777;
-
-  --shadow:
-    0 10px 40px rgba(100, 80, 60, 0.08);
-
-  --shadow-hover:
-    0 18px 45px rgba(100,80,60,0.14);
+  --shadow: 0 10px 30px rgba(100, 80, 60, 0.14);
+  --shadow-hover: 0 18px 45px rgba(100, 80, 60, 0.18);
 }
 
 body {
@@ -1308,12 +1292,7 @@ body {
   display: flex;
   background: var(--background);
   color: var(--text);
-
-  font-family:
-    Inter,
-    SF Pro Display,
-    Arial,
-    sans-serif;
+  font-family: Inter, SF Pro Display, Arial, sans-serif;
 }
 
 /* SIDEBAR */
